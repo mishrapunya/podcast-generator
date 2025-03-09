@@ -35,26 +35,20 @@ def transcript_to_podcast(transcript_text):
     st.write(f"Found {len(speakers)} speakers: {', '.join(speakers)}")
     st.write(f"Found {len(sound_cues)} sound cues")
     
-    # Define voice settings
-    indian_female = {'lang': 'en-in', 'tld': 'co.in'}     # Indian English
-    american_female = {'lang': 'en-us', 'tld': 'com'}     # American English female
-    american_male = {'lang': 'en-us', 'tld': 'com'}       # American English male
-    default_voice = {'lang': 'en-us', 'tld': 'com'}       # Default voice
+    # Simplified approach: Just use different language variants for different voices
+    # These are all guaranteed to work with Google TTS
+    voice_options = [
+        {'lang': 'en-us', 'tld': 'com'},     # US English
+        {'lang': 'en-gb', 'tld': 'co.uk'},   # UK English
+        {'lang': 'en-au', 'tld': 'com.au'},  # Australian English
+        {'lang': 'en-ca', 'tld': 'ca'}       # Canadian English
+    ]
     
-    # Directly assign appropriate voices to each speaker - case insensitive
+    # Assign voices to speakers based on order
     speaker_voices = {}
-    for speaker in speakers:
-        speaker_lower = speaker.lower()
-        if speaker_lower == 'priyal' or speaker_lower == 'arpita':
-            speaker_voices[speaker] = indian_female
-        elif speaker_lower == 'karina':
-            speaker_voices[speaker] = american_female
-        elif speaker_lower == 'bret':
-            speaker_voices[speaker] = american_male
-        else:
-            # Any other speaker gets the default voice
-            speaker_voices[speaker] = default_voice
-            
+    for i, speaker in enumerate(speakers):
+        speaker_voices[speaker] = voice_options[i % len(voice_options)]
+    
     # Create temporary directory for audio segments
     temp_dir = tempfile.mkdtemp()
     segments = []
@@ -64,10 +58,9 @@ def transcript_to_podcast(transcript_text):
     intro_music = intro_music.fade_in(1000).fade_out(2000)
     segments.append(intro_music)
     
-    # Process each dialogue turn and sound cue in order
+    # Process each dialogue turn and sound cue in order by rebuilding the script
     all_elements = []
     
-    # First, rebuild the script in order with both dialogue and sound cues
     # Extract positions of sound cues
     cue_positions = [(m.start(), m.group()) for m in re.finditer(r'\[(.*?)\]', transcript_text)]
     
@@ -77,21 +70,25 @@ def transcript_to_podcast(transcript_text):
         speaker = match.group(1)
         start_pos = match.end()
         
-        # Find the end of this turn (next speaker or end of text)
-        next_speaker_match = re.search(r'\n[A-Za-z]+:', transcript_text[start_pos:])
-        next_cue_match = re.search(r'\[', transcript_text[start_pos:])
-        
+        # Find the end of this turn
         end_pos = len(transcript_text)
-        if next_speaker_match:
-            candidate_end = start_pos + next_speaker_match.start()
+        
+        # Look for the next speaker or sound cue
+        next_turn = re.search(r'\n[A-Za-z]+:', transcript_text[start_pos:])
+        if next_turn:
+            candidate_end = start_pos + next_turn.start()
             if candidate_end < end_pos:
                 end_pos = candidate_end
-        if next_cue_match:
-            candidate_end = start_pos + next_cue_match.start()
+                
+        next_cue = re.search(r'\[', transcript_text[start_pos:])
+        if next_cue:
+            candidate_end = start_pos + next_cue.start()
             if candidate_end < end_pos:
                 end_pos = candidate_end
         
-        turn_positions.append((match.start(), (speaker, transcript_text[start_pos:end_pos].strip())))
+        text = transcript_text[start_pos:end_pos].strip()
+        if text:  # Only add if there's actual text
+            turn_positions.append((match.start(), (speaker, text)))
     
     # Combine and sort all elements by position
     all_elements = cue_positions + turn_positions
@@ -109,22 +106,29 @@ def transcript_to_podcast(transcript_text):
         
         if isinstance(element, tuple):  # Speaker turn
             speaker, text = element
-            if not text:
-                continue
-                
+            
             status_text.text(f"Converting {speaker}'s dialogue...")
             
             # Create TTS audio
             segment_file = os.path.join(temp_dir, f"segment_{len(segments)}.mp3")
-            voice = speaker_voices[speaker]
-            tts = gTTS(text=text, lang=voice['lang'], tld=voice['tld'], slow=False)
-            tts.save(segment_file)
             
-            # Add a short pause after each speaker (300ms)
-            speaker_audio = AudioSegment.from_file(segment_file)
-            pause = AudioSegment.silent(duration=300)
-            segments.append(speaker_audio)
-            segments.append(pause)
+            try:
+                # Get the voice for this speaker
+                voice = speaker_voices[speaker]
+                
+                # Generate the TTS audio
+                tts = gTTS(text=text, lang=voice['lang'], tld=voice['tld'], slow=False)
+                tts.save(segment_file)
+                
+                # Add a short pause after each speaker (300ms)
+                speaker_audio = AudioSegment.from_file(segment_file)
+                pause = AudioSegment.silent(duration=300)
+                segments.append(speaker_audio)
+                segments.append(pause)
+            except Exception as e:
+                st.warning(f"Skipped text: '{text}' due to error: {str(e)}")
+                # Add a silence instead to maintain timing
+                segments.append(AudioSegment.silent(duration=1000))
             
         else:  # Sound cue
             cue_text = element.strip('[]').lower()
@@ -138,21 +142,21 @@ def transcript_to_podcast(transcript_text):
                     music = generate_music(3000, "outro").fade_out(2000)
                     segments.append(music)
             elif "all:" in cue_text.lower():
-                # Create "See you next time" with mixed voices
-                all_segment_file = os.path.join(temp_dir, "all_voices.mp3")
-                text = cue_text.split(":", 1)[1].strip()
-                
-                # Create a combined audio of all voices saying the same thing
-                all_voices = AudioSegment.silent(duration=0)
-                for i, speaker in enumerate(speakers[:4]):  # Limit to 4 speakers max
-                    voice = speaker_voices[speaker]
-                    temp_file = os.path.join(temp_dir, f"all_voice_{i}.mp3")
+                try:
+                    # Create "See you next time" with mixed voices
+                    text = cue_text.split(":", 1)[1].strip()
+                    
+                    # Use just one voice for simplicity
+                    all_segment_file = os.path.join(temp_dir, "all_voices.mp3")
+                    voice = voice_options[0]  # Use first voice
                     tts = gTTS(text=text, lang=voice['lang'], tld=voice['tld'], slow=False)
-                    tts.save(temp_file)
-                    voice_segment = AudioSegment.from_file(temp_file)
-                    all_voices = all_voices.overlay(voice_segment, position=i*100)  # Slightly staggered
-                
-                segments.append(all_voices)
+                    tts.save(all_segment_file)
+                    all_voices = AudioSegment.from_file(all_segment_file)
+                    
+                    segments.append(all_voices)
+                except Exception as e:
+                    st.warning(f"Skipped 'ALL' text due to error: {str(e)}")
+                    segments.append(AudioSegment.silent(duration=1000))
     
     # Combine all segments into final audio
     if segments:
@@ -271,7 +275,7 @@ st.sidebar.info("""
 This app converts podcast transcripts to multi-voice audio files using Google Text-to-Speech.
 
 Features:
-- Voice assignment based on demographics
+- Different voices for each speaker
 - Automatic sound cue processing
 - Multiple speaker support
 - One-click download
