@@ -35,32 +35,26 @@ def transcript_to_podcast(transcript_text):
     st.write(f"Found {len(speakers)} speakers: {', '.join(speakers)}")
     st.write(f"Found {len(sound_cues)} sound cues")
     
-    # Assign specific voices based on demographics:
-    # - Priyal and Arpita are Indian women
-    # - Karina is an American woman
-    # - Bret is an American man
-    
     # Define voice settings
     indian_female = {'lang': 'en-in', 'tld': 'co.in'}     # Indian English
     american_female = {'lang': 'en-us', 'tld': 'com'}     # American English female
     american_male = {'lang': 'en-us', 'tld': 'com'}       # American English male
+    default_voice = {'lang': 'en-us', 'tld': 'com'}       # Default voice
     
-    # Unfortunately, gTTS doesn't have gender-specific voices, but we'll note them for reference
-    
-    # Directly assign appropriate voices to each speaker
-    speaker_voices = {
-        'Priyal': indian_female,
-        'Arpita': indian_female,
-        'Karina': american_female,
-        'Bret': american_male,
-    }
-    
-    # For any other speakers that might be in the transcript
-    default_voice = {'lang': 'en-us', 'tld': 'com'}
+    # Directly assign appropriate voices to each speaker - case insensitive
+    speaker_voices = {}
     for speaker in speakers:
-        if speaker not in speaker_voices:
+        speaker_lower = speaker.lower()
+        if speaker_lower == 'priyal' or speaker_lower == 'arpita':
+            speaker_voices[speaker] = indian_female
+        elif speaker_lower == 'karina':
+            speaker_voices[speaker] = american_female
+        elif speaker_lower == 'bret':
+            speaker_voices[speaker] = american_male
+        else:
+            # Any other speaker gets the default voice
             speaker_voices[speaker] = default_voice
-    
+            
     # Create temporary directory for audio segments
     temp_dir = tempfile.mkdtemp()
     segments = []
@@ -150,7 +144,7 @@ def transcript_to_podcast(transcript_text):
                 
                 # Create a combined audio of all voices saying the same thing
                 all_voices = AudioSegment.silent(duration=0)
-                for i, speaker in enumerate(speakers):
+                for i, speaker in enumerate(speakers[:4]):  # Limit to 4 speakers max
                     voice = speaker_voices[speaker]
                     temp_file = os.path.join(temp_dir, f"all_voice_{i}.mp3")
                     tts = gTTS(text=text, lang=voice['lang'], tld=voice['tld'], slow=False)
@@ -235,15 +229,19 @@ if st.button("Generate Podcast Audio"):
     
     if transcript_text:
         with st.spinner("Generating podcast audio..."):
-            audio_bytes = transcript_to_podcast(transcript_text)
-            
-            if audio_bytes:
-                st.audio(audio_bytes, format="audio/mp3")
+            try:
+                audio_bytes = transcript_to_podcast(transcript_text)
                 
-                # Create download button
-                b64 = base64.b64encode(audio_bytes).decode()
-                href = f'<a href="data:audio/mp3;base64,{b64}" download="podcast.mp3">Download MP3 File</a>'
-                st.markdown(href, unsafe_allow_html=True)
+                if audio_bytes:
+                    st.audio(audio_bytes, format="audio/mp3")
+                    
+                    # Create download button
+                    b64 = base64.b64encode(audio_bytes).decode()
+                    href = f'<a href="data:audio/mp3;base64,{b64}" download="podcast.mp3">Download MP3 File</a>'
+                    st.markdown(href, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error generating audio: {str(e)}")
+                st.info("Try adjusting your transcript format to match the example.")
     else:
         st.error("Please upload a transcript file or paste transcript text.")
 
